@@ -11,7 +11,7 @@
 
   Controls: mouse look · WASD move · Space / C up & down · Shift boost
             E release a sky lantern · G walk / fly · T hold to speed time
-            H hide HUD · M mute · P save a photo
+            V third / first person · H hide HUD · M mute · P save a photo
   URL params: ?seed=123 (new world) · ?t=0.5 (time of day 0..1) · ?q=low
 -->
 <style>
@@ -70,6 +70,7 @@ kbd{font-family:inherit;border:1px solid #fff5;border-radius:4px;padding:1px 5px
 .pp code{font-size:11px}
 #err{display:none;position:fixed;inset:20px;padding:20px;background:#200c;color:#fbb;font:12px/1.5 monospace;white-space:pre-wrap;overflow:auto;z-index:9;border-radius:8px}
 #touch{display:none;position:fixed;inset:0;pointer-events:none}
+.tb.on{background:#ffc27a44;border-color:#ffd9a0}
 .tb{position:absolute;width:64px;height:64px;border-radius:50%;border:1px solid #fff6;background:#0004;pointer-events:auto;display:flex;align-items:center;justify-content:center;font-size:20px;color:#fff;backdrop-filter:blur(4px)}
 @media (max-width:640px){#help{display:none}.tl small{display:none}}
 </style>
@@ -89,13 +90,16 @@ kbd{font-family:inherit;border:1px solid #fff5;border-radius:4px;padding:1px 5px
   <div id="msg"></div>
   <div id="cross"></div>
   <div id="mode">flight</div>
-  <div id="help"><kbd>WASD</kbd> move · <kbd>Space</kbd>/<kbd>C</kbd> rise/sink · <kbd>Shift</kbd> boost · <kbd>E</kbd> lantern · <kbd>G</kbd> walk · <kbd>T</kbd> time · <kbd>H</kbd> hide · <kbd>M</kbd> mute · <kbd>P</kbd> photo</div>
+  <div id="help"><kbd>WASD</kbd> move · <kbd>Space</kbd>/<kbd>C</kbd> rise/sink · <kbd>Shift</kbd> boost · <kbd>E</kbd> lantern · <kbd>G</kbd> walk · <kbd>V</kbd> view · <kbd>T</kbd> time · <kbd>H</kbd> hide · <kbd>M</kbd> mute · <kbd>P</kbd> photo</div>
 </div>
 <div id="touch">
-  <div class="tb" id="tUp" style="right:24px;bottom:110px">▲</div>
-  <div class="tb" id="tLan" style="right:100px;bottom:40px">✦</div>
-  <div class="tb" id="tWalk" style="right:24px;bottom:30px;font-size:13px">G</div>
+  <div class="tb" id="tUp" style="right:24px;bottom:186px">▲</div>
+  <div class="tb" id="tDown" style="right:24px;bottom:108px">▼</div>
+  <div class="tb" id="tWalk" style="right:24px;bottom:30px;font-size:12px;letter-spacing:.05em">WALK</div>
+  <div class="tb" id="tBoost" style="right:100px;bottom:120px;font-size:22px">»</div>
+  <div class="tb" id="tLan" style="right:100px;bottom:42px">✦</div>
   <div class="tb" id="tMenu" style="left:16px;top:64px;width:44px;height:44px;font-size:16px">☰</div>
+  <div class="tb" id="tView" style="left:68px;top:64px;width:44px;height:44px;font-size:11px">VIEW</div>
 </div>
 <div id="intro">
   <h1>DRIFTLANDS</h1>
@@ -103,7 +107,7 @@ kbd{font-family:inherit;border:1px solid #fff5;border-radius:4px;padding:1px 5px
   wake the old shrines, and send lanterns up to where the sky whales sing.</p>
   <div class="go">Begin drifting</div>
   <div class="k">mouse — look &nbsp;·&nbsp; WASD — move &nbsp;·&nbsp; Space / C — rise / sink &nbsp;·&nbsp; Shift — boost<br>
-  E — release a lantern &nbsp;·&nbsp; G — walk / glide &nbsp;·&nbsp; T — hurry time &nbsp;·&nbsp; headphones recommended</div>
+  E — release a lantern &nbsp;·&nbsp; G — walk / glide &nbsp;·&nbsp; V — change view &nbsp;·&nbsp; T — hurry time &nbsp;·&nbsp; headphones recommended</div>
 </div>
 <div id="pause" class="hide">
   <div class="pp">
@@ -112,6 +116,7 @@ kbd{font-family:inherit;border:1px solid #fff5;border-radius:4px;padding:1px 5px
     <label>Volume <input type="range" id="sVol" min="0" max="1" step="0.05"></label>
     <label>Resolution <select id="sQual"><option value="1">Auto</option><option value="0.6">Low (faster)</option><option value="1.35">Sharp</option></select></label>
     <label class="ck"><input type="checkbox" id="sInv"> Invert vertical look</label>
+    <label class="ck"><input type="checkbox" id="sView"> Third-person view <kbd>V</kbd></label>
     <div class="row"><button id="bRes">Resume</button><button id="bHome">Return home</button><button id="bNew">New world</button></div>
     <p class="sm">Progress saves on its own, per world. This is world <span id="pSeed"></span>.<br>Share a world with <code>?seed=</code> in the URL.</p>
   </div>
@@ -308,6 +313,24 @@ void main(){
   o=vec4(fogO(c,vW),1.);
 }`;
 
+// ---- the wanderer: CPU-posed body + support orbs (world-space, rebuilt every frame) ----
+const VS_CHR=`layout(location=0) in vec3 aP;layout(location=1) in vec4 aC;out vec3 vW;out vec3 vC;out float vE;
+void main(){vW=aP;vC=aC.rgb;vE=aC.a;gl_Position=uVP*vec4(aP,1.);}`;
+const FS_CHR=`uniform vec3 uOrb[6];uniform vec3 uOrbC;in vec3 vW;in vec3 vC;in float vE;out vec4 o;
+void main(){
+  vec3 n=normalize(cross(dFdx(vW),dFdy(vW)));
+  vec3 v=normalize(vW-uCam);
+  vec3 c=light(vC,n);
+  // the orbs light whatever they hold
+  for(int i=0;i<6;i++){vec3 L=uOrb[i]-vW;float d2=dot(L,L);c+=vC*uOrbC*(max(dot(n,L*inversesqrt(d2)),0.)*.8+.2)/(1.+d2*9.);}
+  // soft rim so the silhouette reads against sky and cloud
+  float fr=pow(1.-abs(dot(n,v)),3.);
+  c+=vC*(uAmbS*1.4+uGlow*.25)*fr*.9;
+  c+=vC*uGlow*pow(max(dot(v,uSunDir),0.),6.)*.6;
+  c+=vC*vE*(1.1+uNight*1.6);
+  o=vec4(fogO(c,vW),1.);
+}`;
+
 // ---- cloud sea ----
 const VS_SEA=`layout(location=0) in vec2 aP;uniform vec2 uOff;uniform float uSea;
 out vec3 vW;out vec3 vN;out float vH;
@@ -425,7 +448,7 @@ function prog(vs,fs){const p=gl.createProgram();
 
 const PS={
   sky:prog(VS_FS,FS_SKY), isl:prog(VS_ISL,FS_ISL), ins:prog(VS_INS,FS_INS), sea:prog(VS_SEA,FS_SEA),
-  wat:prog(VS_WAT,FS_WAT), glo:prog(VS_GLO,FS_GLO), brt:prog(VS_FS,FS_BRT), blr:prog(VS_FS,FS_BLR), cmp:prog(VS_FS,FS_CMP)
+  wat:prog(VS_WAT,FS_WAT), glo:prog(VS_GLO,FS_GLO), chr:prog(VS_CHR,FS_CHR), brt:prog(VS_FS,FS_BRT), blr:prog(VS_FS,FS_BLR), cmp:prog(VS_FS,FS_CMP)
 };
 // shared ("global") uniforms, pushed to every program that uses them
 const U={uVP:new Float32Array(16),uCam:[0,0,0],uTime:0,uLightDir:[0,1,0],uLightCol:[1,1,1],uAmbS:[.3,.3,.3],uAmbG:[.1,.1,.1],
@@ -530,6 +553,40 @@ gl.bindVertexArray(GLOW.vao);gl.bindBuffer(gl.ARRAY_BUFFER,GLOW.vb);gl.bufferDat
 gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,4,gl.FLOAT,false,32,0);
 gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,4,gl.FLOAT,false,32,16);
 gl.bindVertexArray(null);
+// the wanderer: one mesh per body part, built in its joint's local space (limbs hang along -y, face toward -z).
+// colour alpha = emissive strength.
+const CHC={tun:[.88,.82,.7,0],tun2:[.58,.47,.36,0],pant:[.2,.2,.27,0],boot:[.3,.19,.11,0],skin:[.93,.73,.58,0],belt:[.34,.21,.11,0],
+  scarf:[.9,.3,.12,0],eye:[.45,.95,1.1,1.6],gem:[.5,1,1.25,2.4],orb:[.72,.96,1.1,2.4]};
+function cbox(g,x0,x1,y0,y1,z0,z1,c){
+  const v=[[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]];
+  for(const [a,b,cc,d,s] of [[0,1,2,3,.85],[5,4,7,6,.9],[4,0,3,7,.8],[1,5,6,2,.8],[3,2,6,7,1],[4,5,1,0,.6]]){const col=shade(c,s);g.t(v[a],v[b],v[cc],col);g.t(v[a],v[cc],v[d],col);}}
+const CHR=(()=>{const R=rngOf(9001),C=CHC,mk=f=>{const g=GB();f(g);return new Float32Array(g.a);};return{
+  pelvis:mk(g=>{prism(g,8,.16,.17,-.13,.06,C.pant);prism(g,10,.235,.18,-.29,-.01,C.tun);prism(g,10,.186,.186,-.02,.055,C.belt);
+    blob(g,0,.018,-.19,.034,C.gem,R,0);cbox(g,.215,.29,-.2,-.04,-.05,.08,C.tun2);}),
+  chest:mk(g=>{prism(g,8,.17,.21,0,.34,C.tun);prism(g,8,.21,.12,.34,.46,C.tun);prism(g,9,.135,.12,.38,.5,C.scarf);}),
+  head:mk(g=>{prism(g,6,.055,.05,-.02,.08,C.skin);blob(g,0,.165,-.012,.142,C.skin,R,.03);blob(g,0,.2,.03,.163,C.tun2,R,.05);
+    cone(g,6,.09,.27,.45,C.tun2,R);blob(g,.052,.175,-.142,.021,C.eye,R,0);blob(g,-.052,.175,-.142,.021,C.eye,R,0);}),
+  uarm:mk(g=>{blob(g,0,-.01,0,.078,C.tun,R,.04);prism(g,6,.052,.066,-.28,0,C.tun);}),
+  farm:mk(g=>{prism(g,6,.043,.054,-.22,0,C.tun2);blob(g,0,-.265,-.01,.052,C.skin,R,.05,1.15);}),
+  thigh:mk(g=>{prism(g,7,.07,.088,-.44,0,C.pant);}),
+  shin:mk(g=>{prism(g,7,.057,.07,-.26,0,C.pant);prism(g,7,.068,.074,-.43,-.22,C.boot);}),
+  foot:mk(g=>{cbox(g,-.058,.058,-.085,0,-.17,.06,C.boot);}),
+};})();
+const ORBN=6;
+// orb: icosahedron subdivided once (80 faces) so it reads as a ball, not a gem
+const ORBMESH=(()=>{const o=[];const mid=(a,b)=>norm([(a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2]);
+  for(const f of IF){const a=IV[f[0]],b=IV[f[1]],c=IV[f[2]],ab=mid(a,b),bc=mid(b,c),ca=mid(c,a);
+    for(const t of [[a,ab,ca],[ab,b,bc],[ca,bc,c],[ab,bc,ca]])for(const v of t)o.push(v[0],v[1],v[2]);}return o;})();
+const SCARF=[{n:8,len:.12,off:[.05,.43,.125],p:[],q:[]},{n:6,len:.115,off:[-.05,.42,.125],p:[],q:[]}];
+const CB=(()=>{let n=(CHR.pelvis.length+CHR.chest.length+CHR.head.length+2*(CHR.uarm.length+CHR.farm.length+CHR.thigh.length+CHR.shin.length+CHR.foot.length))/7+ORBN*ORBMESH.length/3;
+  for(const s of SCARF)n+=(s.n-1)*6;return new Float32Array(n*7);})();
+let CHN=0;
+const CHRG={vao:gl.createVertexArray(),vb:gl.createBuffer()};
+gl.bindVertexArray(CHRG.vao);gl.bindBuffer(gl.ARRAY_BUFFER,CHRG.vb);gl.bufferData(gl.ARRAY_BUFFER,CB.byteLength,gl.DYNAMIC_DRAW);
+gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,28,0);
+gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,4,gl.FLOAT,false,28,12);
+gl.bindVertexArray(null);
+
 function gp(x,y,z,s,r,g,b,shape){if(gn>=MAXP)return;const o=gn*8;GP[o]=x;GP[o+1]=y;GP[o+2]=z;GP[o+3]=s;GP[o+4]=r;GP[o+5]=g;GP[o+6]=b;GP[o+7]=shape;gn++;}
 const MAXPT=gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1]||64;
 
@@ -797,6 +854,11 @@ const AU={c:null,muted:false,ci:0,next:0,
     const g=c.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.25,t+.25);g.gain.exponentialRampToValueAtTime(.001,t+1.4);
     s.connect(f);f.connect(g);g.connect(this.fx);s.start(t,Math.random()*2);s.stop(t+1.5);
     this.bell(220,.06,t+.15);this.bell(330,.04,t+.35);},
+  // the soft thump of the orbs pushing off the ground
+  puff(){if(!this.c)return;const c=this.c,t=c.currentTime;const s=c.createBufferSource();s.buffer=this.nb;
+    const f=c.createBiquadFilter();f.type='lowpass';f.frequency.setValueAtTime(1500,t);f.frequency.exponentialRampToValueAtTime(200,t+.55);
+    const g=c.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.32,t+.03);g.gain.exponentialRampToValueAtTime(.001,t+.65);
+    s.connect(f);f.connect(g);g.connect(this.fx);s.start(t,Math.random()*2);s.stop(t+.7);this.bell(440,.03,t+.05);this.bell(660,.02,t+.12);},
   song(g){const c=this.c;if(!c)return;const t=c.currentTime;const f0=70+Math.random()*55;
     const lp=c.createBiquadFilter();lp.type='lowpass';lp.frequency.value=650;const e=c.createGain();
     e.gain.setValueAtTime(0,t);e.gain.linearRampToValueAtTime(g,t+1.2);e.gain.setValueAtTime(g,t+3.2);e.gain.linearRampToValueAtTime(0,t+5.5);
@@ -821,13 +883,14 @@ const AU={c:null,muted:false,ci:0,next:0,
 /* =====================================================================
    6. PLAYER + INPUT
    ===================================================================== */
-const P={pos:[0,0,0],vel:[0,0,0],yaw:0,pitch:-.08,walk:false,ground:false,wasGround:false,air:0,jumpHeld:false,bob:0,fov:70,roll:0,lastYaw:0,inWind:0};
+const P={pos:[0,0,0],vel:[0,0,0],yaw:0,pitch:-.08,walk:false,ground:false,wasGround:false,air:0,jumpHeld:false,bob:0,fov:70,roll:0,lastYaw:0,inWind:0,
+  gliding:false,launch:0,launched:false,upPrev:false,landV:0,inPlanar:false,inVert:false};
 // settings (persisted)
-const CFG={sens:1,vol:.85,inv:false,q:1};
+const CFG={sens:1,vol:.85,inv:false,q:1,view3:true};
 try{Object.assign(CFG,JSON.parse(localStorage.getItem('driftlands:cfg'))||{});}catch(e){}
 function saveCfg(){try{localStorage.setItem('driftlands:cfg',JSON.stringify(CFG));}catch(e){}}
 let paused=false,wasLocked=false;
-const K={};const TI={mx:0,my:0,up:false};
+const K={};const TI={mx:0,my:0,up:false,down:false,boost:false};
 let started=false,drag=false,shot=false;
 let time=0,tod=Q.has('t')?parseFloat(Q.get('t'))%1:.7;
 
@@ -843,6 +906,7 @@ addEventListener('keydown',e=>{
   if(e.repeat){K[k]=true;return;}K[k]=true;
   if(k==='KeyE')releaseLantern();
   if(k==='KeyG')toggleWalk();
+  if(k==='KeyV')setView(!CFG.view3,true);
   if(k==='KeyH')$('hud').classList.toggle('off');
   if(k==='KeyM')AU.toggle();
   if(k==='KeyP')shot=true;
@@ -858,9 +922,12 @@ document.addEventListener('pointerlockchange',()=>{if(document.pointerLockElemen
   sV.oninput=()=>{CFG.vol=+sV.value;saveCfg();if(AU.c&&!AU.muted)AU.m.gain.setTargetAtTime(CFG.vol,AU.c.currentTime,.1);};
   sQ.onchange=()=>{CFG.q=+sQ.value;saveCfg();RS=1;resize(true);};
   sI.onchange=()=>{CFG.inv=sI.checked;saveCfg();};
+  $('sView').onchange=()=>setView($('sView').checked,false);
   $('bRes').onclick=()=>{showPause(false);if(!matchMedia('(pointer:coarse)').matches)lockPointer();};
   $('bNew').onclick=()=>{location.search='?seed='+(1+Math.floor(Math.random()*99999));};
-  $('bHome').onclick=()=>{showPause(false);spawn();P.vel=[0,0,0];P.walk=false;$('mode').textContent='flight';if(!matchMedia('(pointer:coarse)').matches)lockPointer();};}
+  $('bHome').onclick=()=>{showPause(false);spawn();P.vel=[0,0,0];P.walk=false;P.launch=0;AN.init=false;$('mode').textContent='flight';if(!matchMedia('(pointer:coarse)').matches)lockPointer();};}
+function setView(on,say){CFG.view3=on;saveCfg();$('cross').style.display=on?'none':'';$('sView').checked=on;if(say)msg(on?'Third-person view':'First-person view',1.5);}
+setView(CFG.view3,false);
 cv.addEventListener('mousedown',()=>{if(!started){start();return;}if(document.pointerLockElement!==cv){drag=true;lockPointer();}});
 addEventListener('mouseup',()=>{drag=false;});
 // touch: left side = move stick, right side = look
@@ -872,12 +939,17 @@ cv.addEventListener('touchmove',e=>{e.preventDefault();for(const t of e.changedT
   else if(lT&&t.identifier===lT.id){P.yaw+=(t.clientX-lT.x)*.005;P.pitch=clamp(P.pitch-(t.clientY-lT.y)*.005,-1.5,1.5);lT.x=t.clientX;lT.y=t.clientY;}}},{passive:false});
 const tend=e=>{for(const t of e.changedTouches){if(mT&&t.identifier===mT.id){mT=null;TI.mx=TI.my=0;}if(lT&&t.identifier===lT.id)lT=null;}};
 cv.addEventListener('touchend',tend);cv.addEventListener('touchcancel',tend);
-if(matchMedia('(pointer:coarse)').matches){$('touch').style.display='block';}
+if(matchMedia('(pointer:coarse)').matches){$('touch').style.display='block';
+  document.querySelector('#intro .k').innerHTML='left thumb — move &nbsp;·&nbsp; right thumb — look<br>▲ ▼ — rise / sink &nbsp;·&nbsp; » — boost (tap to toggle) &nbsp;·&nbsp; ✦ — lantern &nbsp;·&nbsp; WALK — walk / fly &nbsp;·&nbsp; VIEW — camera';}
 const tb=(id,down,up)=>{const el=$(id);el.addEventListener('touchstart',e=>{e.preventDefault();e.stopPropagation();if(!started)start();down();},{passive:false});
-  el.addEventListener('touchend',e=>{e.preventDefault();up&&up();},{passive:false});};
-tb('tUp',()=>TI.up=true,()=>TI.up=false);tb('tLan',()=>releaseLantern());tb('tWalk',()=>toggleWalk());tb('tMenu',()=>showPause(true));
+  const end=e=>{e.preventDefault();up&&up();};el.addEventListener('touchend',end,{passive:false});el.addEventListener('touchcancel',end,{passive:false});};
+tb('tUp',()=>TI.up=true,()=>TI.up=false);tb('tDown',()=>TI.down=true,()=>TI.down=false);
+tb('tBoost',()=>{TI.boost=!TI.boost;$('tBoost').classList.toggle('on',TI.boost);});
+tb('tLan',()=>releaseLantern());tb('tWalk',()=>toggleWalk());tb('tMenu',()=>showPause(true));tb('tView',()=>setView(!CFG.view3,true));
 
 function toggleWalk(){P.walk=!P.walk;$('mode').textContent=P.walk?'walking':'flight';
+  // lifting off from standing: crouch, then the orbs push you up
+  if(!P.walk&&P.ground){P.launch=1e-4;P.launched=false;}else P.launch=0;
   msg(P.walk?'Feet on the ground. Space to jump, hold it to glide.':'You lift into the air.',2.5);}
 
 let camF=[0,0,-1],camR=[1,0,0],camU=[0,1,0];
@@ -886,16 +958,28 @@ function updatePlayer(dt){
   const fh=[Math.sin(P.yaw),0,-Math.cos(P.yaw)],rt=[Math.cos(P.yaw),0,Math.sin(P.yaw)];
   const mf=(K.KeyW||K.ArrowUp?1:0)-(K.KeyS||K.ArrowDown?1:0)+TI.my;
   const ms=(K.KeyD||K.ArrowRight?1:0)-(K.KeyA||K.ArrowLeft?1:0)+TI.mx;
-  const upk=K.Space||TI.up;const mu=(upk?1:0)-(K.KeyC||K.ControlLeft?1:0);
-  const boost=K.ShiftLeft||K.ShiftRight;
+  const upk=K.Space||TI.up;const mu=(upk?1:0)-(K.KeyC||K.ControlLeft||TI.down?1:0);
+  const boost=K.ShiftLeft||K.ShiftRight||TI.boost;
+  P.inPlanar=Math.abs(mf)+Math.abs(ms)>.05;P.inVert=mu!==0;
   if(!P.walk){
-    const sp=boost?90:28;
+    const sp=boost?90:28;P.gliding=false;
     let d=[camF[0]*mf+rt[0]*ms,camF[1]*mf+mu,camF[2]*mf+rt[2]*ms];const l=Math.hypot(d[0],d[1],d[2]);if(l>1)d=mul3(d,1/l);
-    const damp=Math.exp(-3.2*dt);for(let i=0;i<3;i++)P.vel[i]=(P.vel[i]+d[i]*sp*3.2*dt)*damp;
+    // take off from standing: a short crouch, then the orbs kick you upward
+    if(P.ground&&upk&&!P.upPrev&&!P.launch&&Math.hypot(P.vel[0],P.vel[2])<6){P.launch=1e-4;P.launched=false;}
+    if(P.launch>0){P.launch+=dt;if(P.launch>.75)P.launch=0;}
+    if(P.launch>0&&P.launch<.22){const k=Math.exp(-14*dt);P.vel[0]*=k;P.vel[2]*=k;P.vel[1]=0;}
+    else{
+      if(P.launch>0&&!P.launched){P.launched=true;P.vel[1]=15;launchFx();}
+      // accelerate toward the wanted velocity; ease off more gently than you speed up
+      const tv=mul3(d,sp),dv=[tv[0]-P.vel[0],tv[1]-P.vel[1],tv[2]-P.vel[2]],dl=Math.hypot(dv[0],dv[1],dv[2]);
+      if(dl>1e-5){const faster=Math.hypot(tv[0],tv[1],tv[2])>Math.hypot(P.vel[0],P.vel[1],P.vel[2])+.5;
+        const rate=faster?(boost?16:11)+dl*1.1:5+dl*1.35,st=Math.min(1,rate*dt/dl);
+        for(let i=0;i<3;i++)P.vel[i]+=dv[i]*st;}
+    }
   }else{
     const sp=boost?15:7.5;
     let dx=fh[0]*mf+rt[0]*ms,dz=fh[2]*mf+rt[2]*ms;const l=Math.hypot(dx,dz);if(l>1){dx/=l;dz/=l;}
-    const k=1-Math.exp(-(P.ground?11:1.6)*dt);
+    const k=1-Math.exp(-(P.ground?(l>.1?7:10):1.6)*dt);
     P.vel[0]=lerp(P.vel[0],dx*sp,k);P.vel[2]=lerp(P.vel[2],dz*sp,k);
     P.vel[1]-=30*dt;
     if(P.ground&&upk&&!P.jumpHeld){P.vel[1]=12.5;P.ground=false;P.air=0;}
@@ -916,7 +1000,10 @@ function updatePlayer(dt){
   if(inW>.2&&!SAVE.windTip){SAVE.windTip=1;msg('A wind current! Let it carry you, or steer out of it.',4.5);save();}
   P.inWind=inW;
   for(let i=0;i<3;i++)P.pos[i]+=P.vel[i]*dt;
+  const vy0=P.vel[1];
   collide();
+  if(P.ground&&!P.wasGround&&vy0<-5)P.landV=vy0;
+  P.upPrev=upk;
   if(P.pos[1]<SEA-22){P.vel[1]+=((SEA-22-P.pos[1])*3+18)*dt;}
   if(P.walk&&P.pos[1]<SEA+8){P.walk=false;$('mode').textContent='flight';msg('The clouds catch you. You remember how to fly.',4);}
   if(P.pos[1]>650)P.vel[1]-=(P.pos[1]-650)*2*dt;
@@ -927,7 +1014,9 @@ function collide(){
     const dx=x-I.x,dz=z-I.z;if(dx*dx+dz*dz>I.maxR*I.maxR)continue;
     const d=Math.hypot(dx,dz),er=edgeR(I,Math.atan2(dz,dx)),rf=d/er;if(rf>=1)continue;
     const top=topH(I,x,z,rf),y=P.pos[1];
-    if(y>=top+EYE){if(P.walk&&P.wasGround&&y<top+EYE+.7&&P.vel[1]<=0){P.pos[1]=top+EYE;P.vel[1]=0;P.ground=true;}continue;}
+    if(y>=top+EYE){if(P.walk&&P.wasGround&&y<top+EYE+.7&&P.vel[1]<=0){P.pos[1]=top+EYE;P.vel[1]=0;P.ground=true;}
+      else if(!P.walk&&y<top+EYE+.08&&P.vel[1]<=.05)P.ground=true;   // resting on the ground in flight mode
+      continue;}
     const bot=lerp(top-1.2,I.y-I.depth,Math.pow(Math.max(0,1-Math.pow(rf,1/1.25)),.8))-1.6;
     if(y<=bot)continue;
     const up=top+EYE-y,down=y-bot,out=(1-rf)*er+.8;
@@ -999,10 +1088,12 @@ function updateLife(dt,night,day){
   }
   // followers: your collected wisps trail behind you
   const nf=Math.min(SAVE.w,24);
-  while(FOL.length<nf)FOL.push({p:[cam[0]-camF[0]*4,cam[1],cam[2]-camF[2]*4],v:[0,0,0],k:Math.random()*20});
+  // (third person: they circle the wanderer; first person: they trail behind the camera)
+  const tp=CFG.view3,fc=tp?[cam[0]-P.vel[0]*.06,cam[1]-EYE+1.5,cam[2]-P.vel[2]*.06]:[cam[0]-camF[0]*5,cam[1]-.8,cam[2]-camF[2]*5];
+  while(FOL.length<nf)FOL.push({p:fc.slice(),v:[0,0,0],k:Math.random()*20});
   while(FOL.length>nf)FOL.pop();
-  for(let i=0;i<FOL.length;i++){const f=FOL[i];const a=t*.9+f.k,rad=2.2+(i%5)*.7;
-    const tx=cam[0]-camF[0]*5+Math.cos(a)*rad,ty=cam[1]-.8+Math.sin(t*1.3+f.k)*1.2,tz=cam[2]-camF[2]*5+Math.sin(a)*rad;
+  for(let i=0;i<FOL.length;i++){const f=FOL[i];const a=t*.9+f.k,rad=(tp?2.5:2.2)+(i%5)*(tp?.6:.7);
+    const tx=fc[0]+Math.cos(a)*rad,ty=fc[1]+Math.sin(t*1.3+f.k)*1.2,tz=fc[2]+Math.sin(a)*rad;
     f.v[0]+=(tx-f.p[0])*5*dt;f.v[1]+=(ty-f.p[1])*5*dt;f.v[2]+=(tz-f.p[2])*5*dt;
     const dm=Math.exp(-2.6*dt);for(let j=0;j<3;j++){f.v[j]*=dm;f.p[j]+=f.v[j]*dt;}
     const br=.8+.2*Math.sin(t*4+f.k);gp(f.p[0],f.p[1],f.p[2],.4,1.3*br,.9*br,.45*br,0);gp(f.p[0],f.p[1],f.p[2],1.7,.1*br,.07*br,.03*br,0);}
@@ -1074,6 +1165,243 @@ function updateLife(dt,night,day){
   const bc=mix3([.03,.03,.04],[.2,.2,.22],day);
   for(let i=0;i<BIRDS.length;i++){const b=BIRDS[i];const p=bp(b,t),q=bp(b,t+.25);const o=i*12;
     BIRDBUF.set([p[0],p[1],p[2],b.s,Math.atan2(-(q[0]-p[0]),-(q[2]-p[2])),1,1,b.ph+(i%3)*.1,bc[0],bc[1],bc[2],0],o);}
+}
+
+/* =====================================================================
+   7b. THE WANDERER — a posed, animated body held aloft by six orbs
+   ===================================================================== */
+// 3x3 rotations (row-major). Body space: +x right, +y up, +z back (face looks down -z).
+const cross3=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const RX=a=>{const c=Math.cos(a),s=Math.sin(a);return[1,0,0,0,c,-s,0,s,c];};
+const RY=a=>{const c=Math.cos(a),s=Math.sin(a);return[c,0,s,0,1,0,-s,0,c];};
+const RZ=a=>{const c=Math.cos(a),s=Math.sin(a);return[c,-s,0,s,c,0,0,0,1];};
+function m3(a,b){const o=[0,0,0,0,0,0,0,0,0];for(let r=0;r<3;r++)for(let c=0;c<3;c++)o[r*3+c]=a[r*3]*b[c]+a[r*3+1]*b[3+c]+a[r*3+2]*b[6+c];return o;}
+function m3v(m,v){return[m[0]*v[0]+m[1]*v[1]+m[2]*v[2],m[3]*v[0]+m[4]*v[1]+m[5]*v[2],m[6]*v[0]+m[7]*v[1]+m[8]*v[2]];}
+// child joint: offset in the parent's frame, then twist(y) · side(z) · swing(x)
+function joint(par,off,x,y,z){const t=m3v(par.R,off);return{R:m3(par.R,m3(RY(y),m3(RZ(z),RX(x)))),T:[par.T[0]+t[0],par.T[1]+t[1],par.T[2]+t[2]]};}
+function wpt(J,p){const v=m3v(J.R,p);return[J.T[0]+v[0],J.T[1]+v[1],J.T[2]+v[2]];}
+
+// Pose channels. Limbs: S* shoulder (x + = swing forward, z + = raise out to the side), El elbow bend,
+// H* hip (x + = leg forward), Kn knee (− = bend), An ankle (− = point toes). sp/sy/sz spine lean/twist/side, nk/ny head nod/turn, dy pelvis drop.
+const PK=['sp','sy','sz','nk','ny','rSx','rSz','rEl','lSx','lSz','lEl','rHx','rHz','rKn','rAn','lHx','lHz','lKn','lAn','dy'];
+const sym=(o,x)=>{const p={};for(const k in o){if(k[0]>='A'&&k[0]<='Z'){p['r'+k]=o[k];p['l'+k]=o[k];}else p[k]=o[k];}return Object.assign(p,x||{});};
+const PO={
+  stand: sym({Sx:.05,Sz:.12,El:.18,Hz:.04,Kn:-.04,An:.04}),
+  // hovering: palms and soles rest on orbs, legs dangle
+  hover: sym({sp:.06,nk:.05,Sx:.32,Sz:.62,El:.4,Hz:.1,An:-.45},{rHx:.12,rKn:-.3,lHx:-.06,lKn:-.48}),
+  // flying: arms swept back along the body, legs trailing, toes pointed
+  fly:   sym({Sx:-.42,Sz:.22,El:.12,Hz:.03,An:-1.05},{rHx:-.08,rKn:-.32,lHx:-.16,lKn:-.12}),
+  // boosting: one fist forward into the wind
+  boost: sym({Sx:-.3,Sz:.12,El:.05,Hx:-.05,Kn:-.06,An:-1.15},{rSx:2.95,rSz:.12,rEl:.08}),
+  // rising: arms up and out, legs together, orbs thrusting below
+  rise:  sym({sp:-.08,nk:-.3,Sx:.35,Sz:2.45,El:.25,Hx:-.04,Kn:-.12,An:-.95}),
+  // sinking: arms raised holding orbs overhead like balloons, knees drawn up
+  sink:  sym({sp:.12,nk:.3,Sx:.25,Sz:2.4,El:.45,An:.15},{rHx:.5,rKn:-.85,lHx:.28,lKn:-.55}),
+  // braking: flare back, arms and legs thrown forward
+  brake: sym({sp:-.1,nk:.15,Sx:1.15,Sz:.6,El:.35,Hx:.75,Hz:.08,Kn:-.75,An:.25}),
+  jump:  sym({Sz:.55,El:.6},{rSx:.9,lSx:-.5,rHx:.95,rKn:-1.35,rAn:-.3,lHx:-.25,lKn:-.45,lAn:-.5}),
+  fall:  sym({nk:.2,Sx:.4,Sz:1.55,El:.35,Hx:.25,Hz:.12,Kn:-.5,An:.1},{rHx:.45,rKn:-.75}),
+  glide: sym({nk:-.6,Sx:.08,Sz:1.42,El:.08,Hx:-.1,Kn:-.2,An:-.9}),
+  crouch:sym({sp:.45,nk:-.25,Sx:-.75,Sz:.25,El:.4,Hx:1.05,Hz:.06,Kn:-1.75,An:.7,dy:-.33}),
+};
+function addP(o,p,w){if(w<1e-4)return;for(const k of PK){const v=p[k];if(v)o[k]+=v*w;}}
+// a walk that becomes a run: ph = stride phase, a = amplitude, run = 0..1
+function walkPose(ph,a,run){const s=Math.sin(ph),c=Math.cos(ph),kb=.06+run*.25*a;
+  return{rHx:s*.62*a,lHx:-s*.62*a,rKn:-(kb+Math.max(0,c)*1.15*a),lKn:-(kb+Math.max(0,-c)*1.15*a),
+    rAn:(.25*Math.max(0,c)-.45*Math.max(0,-s))*a,lAn:(.25*Math.max(0,-c)-.45*Math.max(0,s))*a,
+    rSx:-s*.55*a,lSx:s*.55*a,rSz:.1+run*.1,lSz:.1+run*.1,rEl:.25+a*(.25+run*.95),lEl:.25+a*(.25+run*.95),
+    rHz:.04,lHz:.04,sp:.04+run*.16,sy:s*.13*a,nk:-.04-run*.1,dy:-.07*a*s*s-.02*a-run*.05};}
+
+const AN={init:false,yaw:0,lean:0,leanV:0,roll:0,rollV:0,turn:0,travel:0,pv:[0,0,0],acc:[0,0,0],G:0,WA:0,FA:1,gl:0,ph:0,landT:9,landK:0};
+const PQ={};
+const ORBS=[];for(let i=0;i<ORBN;i++)ORBS.push({o:[0,-.6,0],v:[0,0,0],p:[0,0,0]});
+const ORBU=new Float32Array(ORBN*3),ORBC=new Float32Array(3);
+
+function launchFx(){AU.puff();const x=P.pos[0],y=P.pos[1]-EYE+.08,z=P.pos[2];
+  for(let i=0;i<34;i++){const a=Math.random()*TAU,s=2.5+Math.random()*4.5;BURST.push({p:[x,y,z],v:[Math.cos(a)*s,.3+Math.random()*1.6,Math.sin(a)*s],t:0,m:.45+Math.random()*.5});}}
+
+function pushV(p,c){const o=CHN*7;CB[o]=p[0];CB[o+1]=p[1];CB[o+2]=p[2];CB[o+3]=c[0];CB[o+4]=c[1];CB[o+5]=c[2];CB[o+6]=c[3];CHN++;}
+function emitPart(src,J){const R=J.R,T=J.T;let o=CHN*7;
+  for(let i=0;i<src.length;i+=7){const x=src[i],y=src[i+1],z=src[i+2];
+    CB[o]=T[0]+R[0]*x+R[1]*y+R[2]*z;CB[o+1]=T[1]+R[3]*x+R[4]*y+R[5]*z;CB[o+2]=T[2]+R[6]*x+R[7]*y+R[8]*z;
+    CB[o+3]=src[i+3];CB[o+4]=src[i+4];CB[o+5]=src[i+5];CB[o+6]=src[i+6];o+=7;}
+  CHN=o/7;}
+function emitOrb(p,r,c){for(let i=0;i<ORBMESH.length;i+=3)pushV([p[0]+ORBMESH[i]*r,p[1]+ORBMESH[i+1]*r,p[2]+ORBMESH[i+2]*r],c);}
+
+// scarf tails: verlet chains hanging from the back of the neck; they trail in the wind of your own speed
+function simScarf(sc,a,dt,cols){
+  const p=sc.p,q=sc.q,n=sc.n;
+  if(!p.length||Math.hypot(a[0]-p[0][0],a[1]-p[0][1],a[2]-p[0][2])>4){sc.p=[];sc.q=[];
+    for(let k=0;k<n;k++){const v=[a[0],a[1]-k*sc.len,a[2]+k*.02];sc.p.push(v);sc.q.push(v.slice());}return;}
+  p[0]=a.slice();q[0]=a.slice();
+  const damp=Math.pow(.12,dt),gy=-6*dt*dt;
+  for(let k=1;k<n;k++){const P2=p[k],Q2=q[k];for(let j=0;j<3;j++){const vv=(P2[j]-Q2[j])*damp;Q2[j]=P2[j];P2[j]+=vv;}P2[1]+=gy;}
+  for(let it=0;it<3;it++)for(let k=1;k<n;k++){const P2=p[k],B=p[k-1];
+    let dx=P2[0]-B[0],dy=P2[1]-B[1],dz=P2[2]-B[2];const l=Math.hypot(dx,dy,dz)||1e-4,f=sc.len/l;
+    P2[0]=B[0]+dx*f;P2[1]=B[1]+dy*f;P2[2]=B[2]+dz*f;
+    for(const [c,r] of cols){dx=P2[0]-c[0];dy=P2[1]-c[1];dz=P2[2]-c[2];const d=Math.hypot(dx,dy,dz);if(d<r&&d>1e-4){const g=r/d;P2[0]=c[0]+dx*g;P2[1]=c[1]+dy*g;P2[2]=c[2]+dz*g;}}}}
+function emitScarf(sc,e1,s,t){
+  const n=sc.n,p=sc.p,pts=[];if(!p.length)return;
+  for(let k=0;k<n;k++){const a=p[Math.max(0,k-1)],b=p[Math.min(n-1,k+1)];const d=norm([b[0]-a[0],b[1]-a[1],b[2]-a[2]]);
+    const de=dot(e1,d);let sv=[e1[0]-d[0]*de,e1[1]-d[1]*de,e1[2]-d[2]*de];const sl=Math.hypot(sv[0],sv[1],sv[2]);
+    sv=sl>.05?mul3(sv,1/sl):norm(cross3(d,[0,1,0]));
+    const nv=cross3(d,sv),tw=Math.sin(t*6-k*.9)*.45*Math.min(1,s/15),ct=Math.cos(tw),st=Math.sin(tw);
+    const w=.085*(1-k/n*.35),fl=Math.sin(t*15-k*1.3)*Math.min(s/28,1.6)*.035*k/n;
+    const side=[(sv[0]*ct+nv[0]*st)*w,(sv[1]*ct+nv[1]*st)*w,(sv[2]*ct+nv[2]*st)*w];
+    pts.push([p[k][0]+nv[0]*fl,p[k][1]+nv[1]*fl,p[k][2]+nv[2]*fl,side]);}
+  for(let k=0;k<n-1;k++){const A=pts[k],B=pts[k+1],sa=A[3],sb=B[3];
+    const a0=[A[0]-sa[0],A[1]-sa[1],A[2]-sa[2]],a1=[A[0]+sa[0],A[1]+sa[1],A[2]+sa[2]],b0=[B[0]-sb[0],B[1]-sb[1],B[2]-sb[2]],b1=[B[0]+sb[0],B[1]+sb[1],B[2]+sb[2]];
+    const col=shade(CHC.scarf,(k%2?.9:1.04)*(1-k/n*.18));pushV(a0,col);pushV(a1,col);pushV(b1,col);pushV(a0,col);pushV(b1,col);pushV(b0,col);}}
+
+function updateChar(dt,eye){
+  const t=time,v=P.vel;dt=Math.max(dt,1e-4);
+  if(!AN.init){AN.init=true;AN.yaw=P.yaw;AN.pv=v.slice();AN.acc=[0,0,0];for(const sc of SCARF)sc.p=[];}
+  // smoothed acceleration drives leaning in, flaring out and the orbs' swing
+  const ka=1-Math.exp(-dt*9);
+  for(let i=0;i<3;i++){AN.acc[i]=lerp(AN.acc[i],(v[i]-AN.pv[i])/dt,ka);AN.pv[i]=v[i];}
+  const hs=Math.hypot(v[0],v[2]),s=Math.hypot(hs,v[1]);
+  // face where you are going
+  if(hs>1.2){let d=Math.atan2(v[0],-v[2])-AN.yaw;d=Math.atan2(Math.sin(d),Math.cos(d));
+    const dy=d*(1-Math.exp(-dt*(P.ground?11:5.5)*clamp((hs-1.2)/3,0,1)));AN.yaw+=dy;AN.turn=lerp(AN.turn,dy/dt,1-Math.exp(-dt*6));}
+  else AN.turn=lerp(AN.turn,0,1-Math.exp(-dt*6));
+  const fwd=[Math.sin(AN.yaw),0,-Math.cos(AN.yaw)],vd=s>1?[v[0]/s,v[1]/s,v[2]/s]:fwd;
+  const aT=dot(AN.acc,vd),aF=dot(AN.acc,fwd);
+  // which family of motion: on the ground / walk-mode airborne / flying
+  const kg=1-Math.exp(-dt*9);
+  AN.G=lerp(AN.G,P.ground?1:0,kg);AN.WA=lerp(AN.WA,!P.ground&&P.walk?1:0,kg);AN.FA=lerp(AN.FA,!P.ground&&!P.walk?1:0,kg);
+  const gs=AN.G+AN.WA+AN.FA||1,G=AN.G/gs,WA=AN.WA/gs,FA=AN.FA/gs;
+  if(P.inPlanar)AN.travel=lerp(AN.travel,1,1-Math.exp(-dt*4));else if(P.inVert)AN.travel=lerp(AN.travel,0,1-Math.exp(-dt*3));
+  AN.gl=lerp(AN.gl,P.walk&&P.gliding?1:0,1-Math.exp(-dt*6));
+  if(P.landV<-5){AN.landT=0;AN.landK=clamp(-P.landV/22,.3,.85);}P.landV=0;AN.landT+=dt;
+
+  for(const k of PK)PQ[k]=0;
+  // ground: stand ↔ walk ↔ run
+  const mv=clamp(hs/1.6,0,1),run=clamp((hs-8)/7,0,1);
+  AN.ph+=dt*TAU*hs/(1.7+hs*.12);
+  if(G>1e-3){addP(PQ,PO.stand,G*(1-mv));if(mv>0)addP(PQ,walkPose(AN.ph,Math.min(hs/7.5,1.3),run),G*mv);PQ.sp+=G*(1-mv)*Math.sin(t*1.5)*.015;}
+  // walk mode in the air: jump, fall, glide
+  if(WA>1e-3){const up=clamp(v[1]/7+.5,0,1);addP(PQ,PO.glide,WA*AN.gl);addP(PQ,PO.jump,WA*(1-AN.gl)*up);addP(PQ,PO.fall,WA*(1-AN.gl)*(1-up));}
+  // flight: hover, travel (fly / boost), brake, rise, sink
+  const sN=clamp(s/28,0,1);let wT=0,wB=0,wU=0,wD=0,wH=0,fLean=0;
+  if(FA>1e-3){
+    wB=clamp(-aT/22,0,1)*clamp(s/5,0,1)*AN.travel;
+    wT=AN.travel*sN*(1-wB);
+    const rem=Math.max(0,1-wT-wB);
+    wU=rem*clamp(v[1]/14,0,1);wD=rem*clamp(-v[1]/14,0,1);wH=Math.max(0,rem-wU-wD);
+    const bo=clamp((s-32)/40,0,1);
+    addP(PQ,PO.hover,FA*wH);addP(PQ,PO.rise,FA*wU);addP(PQ,PO.sink,FA*wD);addP(PQ,PO.brake,FA*wB);
+    addP(PQ,PO.fly,FA*wT*(1-bo));addP(PQ,PO.boost,FA*wT*bo);
+    const ang=Math.atan2(hs,v[1]);          // 0 straight up · π/2 level · π straight down: the body lines up with its path
+    fLean=wT*ang*.9+wB*(ang*.25-.32)+wH*.04+wD*.1-wU*.03+clamp(aT/50,-.3,.45)*.55*AN.travel;
+  }
+  // breathing, the hover's gentle bob (arms press down on the orbs), leg flutter
+  const br=Math.sin(t*1.9),hb=FA*wH;
+  PQ.dy+=hb*br*.07;PQ.rSz+=hb*Math.sin(t*1.9+.7)*.05;PQ.lSz+=hb*Math.sin(t*1.9+.7)*.05;
+  const flt=Math.sin(t*7)*.07*FA*wT;PQ.rHx+=flt;PQ.lHx-=flt;
+  // crouch overlay: winding up a take-off, or soaking up a landing
+  let cw=0;if(P.launch>0)cw=sstep(0,.09,P.launch)*(1-sstep(.2,.34,P.launch));
+  if(AN.landT<.4)cw=Math.max(cw,(AN.landT<.06?AN.landT/.06:1-(AN.landT-.06)/.34)*AN.landK);
+  if(cw>0)for(const k of PK)PQ[k]=lerp(PQ[k],PO.crouch[k]||0,cw);
+  // whole-body lean and bank, on springs so they overshoot a touch
+  const leanT=G*(.03+clamp(hs/15,0,1)*.15+clamp(aF/30,-.3,.3)*.5)+WA*(AN.gl*.95+.03)+FA*fLean;
+  AN.leanV+=((leanT*(1-cw)-AN.lean)*55-AN.leanV*11)*dt;AN.lean+=AN.leanV*dt;
+  const rollT=-clamp(AN.turn*.3,-.8,.8)*(FA*sN+WA*AN.gl+G*.12*clamp(hs/7,0,1));
+  AN.rollV+=((rollT-AN.roll)*40-AN.rollV*10)*dt;AN.roll+=AN.rollV*dt;
+  // head: tip back to see ahead when flying flat; glance where the camera looks
+  PQ.nk-=FA*(1-AN.gl)*(AN.lean>0?AN.lean*.62:AN.lean*.3);
+  let dl=P.yaw-AN.yaw;dl=Math.atan2(Math.sin(dl),Math.cos(dl));
+  const lk=(1-sstep(1.6,2.4,Math.abs(dl)))*(1-clamp(AN.lean,0,1));
+  PQ.ny-=clamp(dl,-1,1)*.6*lk;PQ.nk-=P.pitch*.35*lk;PQ.nk=Math.max(PQ.nk,-1.1);
+
+  // ---- forward kinematics ----
+  const rootP=[P.pos[0],P.pos[1]-EYE+1.01+PQ.dy,P.pos[2]];
+  const Rr=m3(RY(-AN.yaw),m3(RZ(AN.roll),RX(-AN.lean)));
+  const root={R:Rr,T:rootP};
+  const chest=joint(root,[0,.06,0],-PQ.sp,PQ.sy,PQ.sz),head=joint(chest,[0,.47,0],-PQ.nk,PQ.ny,0);
+  const J={};
+  for(const sd of [1,-1]){const c=sd>0?'r':'l';
+    const sh=joint(chest,[.215*sd,.4,0],PQ[c+'Sx'],0,PQ[c+'Sz']*sd),el=joint(sh,[0,-.28,0],PQ[c+'El'],0,0);
+    const hp=joint(root,[.09*sd,-.08,0],PQ[c+'Hx'],0,PQ[c+'Hz']*sd),kn=joint(hp,[0,-.43,0],PQ[c+'Kn'],0,0),an=joint(kn,[0,-.42,0],PQ[c+'An'],0,0);
+    J[c]={sh,el,hp,kn,an};}
+  const e1=[Rr[0],Rr[3],Rr[6]],ax=[Rr[1],Rr[4],Rr[7]],e2=[Rr[2],Rr[5],Rr[8]];
+  const hR=wpt(J.r.el,[0,-.27,0]),hL=wpt(J.l.el,[0,-.27,0]),fR=wpt(J.r.an,[0,-.05,-.05]),fL=wpt(J.l.an,[0,-.05,-.05]);
+  const fm=[(fR[0]+fL[0])/2,(fR[1]+fL[1])/2,(fR[2]+fL[2])/2],hd=wpt(head,[0,.3,0]);
+
+  // ---- scarf ----
+  const cols=[[wpt(chest,[0,.2,0]),.25],[rootP,.24],[wpt(head,[0,.16,0]),.17]];
+  for(const sc of SCARF)simScarf(sc,wpt(chest,sc.off),dt,cols);
+
+  // ---- orbs: each one is pulled toward a blend of where every motion wants it, in body-relative space ----
+  const supW=FA*(wH+wB)+WA*AN.gl,trW=FA*wT,upW=FA*wU,dnW=FA*wD,haW=G+WA*(1-AN.gl);
+  const al=Math.hypot(AN.acc[0],AN.acc[1],AN.acc[2]),ac=al>40?mul3(AN.acc,40/al):AN.acc;
+  for(let i=0;i<ORBN;i++){const ob=ORBS[i],ph=i/ORBN*TAU,T=[0,0,0];
+    const add=(p,w)=>{if(w>1e-4){T[0]+=p[0]*w;T[1]+=p[1]*w;T[2]+=p[2]*w;}};
+    // hover: one under each palm and each sole; two more circle the waist
+    if(supW>1e-4){let p;if(i<4){const b=[hR,hL,fR,fL][i];p=[b[0],b[1]-(i<2?.13:.15),b[2]];}
+      else{const a=t*1.3+ph;p=[rootP[0]+Math.cos(a)*.78,rootP[1]+.12+Math.sin(t*2.1+i)*.1,rootP[2]+Math.sin(a)*.78];}add(p,supW);}
+    // travel: a helix winding along the body from crown to toes
+    if(trW>1e-4){const a=t*(3.4+s*.05)+i*2.4,al2=1.05-i*.42,rr=.5+.08*Math.sin(t*3+i),c=Math.cos(a)*rr,sn=Math.sin(a)*rr;
+      add([rootP[0]+ax[0]*al2+e1[0]*c+e2[0]*sn,rootP[1]+ax[1]*al2+e1[1]*c+e2[1]*sn,rootP[2]+ax[2]*al2+e1[2]*c+e2[2]*sn],trW);}
+    // rising: a spinning ring of thrusters under the feet
+    if(upW>1e-4){const a=t*6.5+ph;add([fm[0]+Math.cos(a)*.3,fm[1]-.28-(i%2)*.14,fm[2]+Math.sin(a)*.3],upW);}
+    // sinking: held overhead, a slow parachute
+    if(dnW>1e-4){let p;if(i<2){const b=i?hL:hR;p=[b[0],b[1]+.16,b[2]];}
+      else{const a=t*1.6+ph;p=[hd[0]+Math.cos(a)*.55,hd[1]+.3+Math.sin(t*2+i)*.06,hd[2]+Math.sin(a)*.55];}add(p,dnW);}
+    // on the ground: a lazy halo
+    if(haW>1e-4){const a=t*.85+ph;add([rootP[0]+Math.cos(a)*.85,rootP[1]+.5+Math.sin(t*1.7+i*1.3)*.13,rootP[2]+Math.sin(a)*.85],haW);}
+    const tw=supW+trW+upW+dnW+haW||1;T[0]/=tw;T[1]/=tw;T[2]/=tw;
+    if(cw>0){const a=t*3+ph,c=[fm[0]+Math.cos(a)*.32,fm[1]-.02,fm[2]+Math.sin(a)*.32];for(let j=0;j<3;j++)T[j]=lerp(T[j],c[j],cw);}
+    // springs with inertia: they lag when you speed up and swing ahead when you brake
+    for(let j=0;j<3;j++){const to=T[j]-rootP[j];ob.v[j]+=((to-ob.o[j])*70-ob.v[j]*12-ac[j]*.7)*dt;ob.o[j]+=ob.v[j]*dt;
+      if(!isFinite(ob.o[j])){ob.o[j]=to;ob.v[j]=0;}ob.p[j]=rootP[j]+ob.o[j];}
+    ORBU[i*3]=ob.p[0];ORBU[i*3+1]=ob.p[1];ORBU[i*3+2]=ob.p[2];
+  }
+  const ol=.55+NIGHT*1.3;ORBC[0]=.32*ol;ORBC[1]=.62*ol;ORBC[2]=.9*ol;
+
+  // ---- build this frame's mesh + glows ----
+  CHN=0;
+  const tp=CFG.view3;
+  if(tp){emitPart(CHR.pelvis,root);emitPart(CHR.chest,chest);emitPart(CHR.head,head);
+    for(const c of ['r','l']){const j=J[c];emitPart(CHR.uarm,j.sh);emitPart(CHR.farm,j.el);emitPart(CHR.thigh,j.hp);emitPart(CHR.shin,j.kn);emitPart(CHR.foot,j.an);}
+    for(const sc of SCARF)emitScarf(sc,e1,s,t);}
+  for(let i=0;i<ORBN;i++){const p=ORBS[i].p;
+    if(!tp&&(p[0]-eye[0])**2+(p[1]-eye[1])**2+(p[2]-eye[2])**2<.9)continue;
+    emitOrb(p,.075,CHC.orb);
+    const k=(1-hb*.35*br)*(1+.3*sN)*(1+NIGHT*.6);
+    gp(p[0],p[1],p[2],.2,.95*k,1.45*k,1.9*k,0);gp(p[0],p[1],p[2],.95,.06*k,.11*k,.16*k,0);
+    // lift: light drips from the orbs that hold you up, and pours from them when rising
+    const st=FA*(wH*(i<4?1:.3)+wU*1.6)+WA*AN.gl*(i<2?1:0)+cw*.8;
+    if(st>.02)for(let j=0;j<3;j++){const f=(t*1.3+j/3+i*.29)%1,a=(1-f)*st;
+      gp(p[0]+Math.sin(f*7+i)*.04,p[1]-.06-f*(.6+upW*.8),p[2]+Math.cos(f*6+i)*.04,.06+.06*(1-f),.4*a,.8*a,1.1*a,0);}
+    // speed streaks behind each orb
+    const sl=trW*sN;
+    if(sl>.02)for(let j=1;j<=4;j++){const a=sl*(1-j/5)*.6;gp(p[0]-vd[0]*j*.22,p[1]-vd[1]*j*.22,p[2]-vd[2]*j*.22,.1,.35*a,.7*a,a,0);}
+  }
+}
+
+// is a point inside island rock? (keeps the chase camera out of cliffs and hillsides)
+function solidAt(x,y,z){
+  for(const I of activeIsl){const dx=x-I.x,dz=z-I.z;if(dx*dx+dz*dz>I.maxR*I.maxR)continue;
+    if(y>I.y+I.R*.6||y<I.y-I.depth-I.R*.25)continue;
+    const d=Math.hypot(dx,dz),er=edgeR(I,Math.atan2(dz,dx)),rf=d/er;if(rf>=1)continue;
+    const top=topH(I,x,z,rf);if(y>top+.35)continue;
+    const bot=lerp(top-1.2,I.y-I.depth,Math.pow(Math.max(0,1-Math.pow(rf,1/1.25)),.8))-1.6;if(y>bot)return true;}
+  return false;}
+// chase camera: lags a little behind (so speeding up and slowing down read), pulls back with speed, never enters rock
+const CAM={t:null,d:5,cd:5};
+function chaseCam(dt,speed){
+  const tg=[P.pos[0],P.pos[1]-EYE+1.75,P.pos[2]];
+  if(!CAM.t||Math.hypot(CAM.t[0]-tg[0],CAM.t[1]-tg[1],CAM.t[2]-tg[2])>40){CAM.t=tg.slice();CAM.cd=CAM.d;}
+  const kf=1-Math.exp(-dt*7);for(let i=0;i<3;i++)CAM.t[i]=lerp(CAM.t[i],tg[i],kf);
+  const lx=CAM.t[0]-tg[0],ly=CAM.t[1]-tg[1],lz=CAM.t[2]-tg[2],ll=Math.hypot(lx,ly,lz);
+  if(ll>1.5){const f=1.5/ll;CAM.t=[tg[0]+lx*f,tg[1]+ly*f,tg[2]+lz*f];}
+  // portrait phones have a narrow horizontal view: sit a bit further back
+  const want=(P.walk?4.3:4.9)+clamp(speed/90,0,1)*2.4+(W<H?1.3:0);
+  CAM.d=lerp(CAM.d,want,1-Math.exp(-dt*1.6));
+  const ct=CAM.t;let d=CAM.d;
+  for(let i=1;i<=12;i++){const q=i/12*CAM.d;if(solidAt(ct[0]-camF[0]*q,ct[1]-camF[1]*q,ct[2]-camF[2]*q)){d=Math.max(.55,q-CAM.d/12-.25);break;}}
+  CAM.cd=lerp(CAM.cd,d,1-Math.exp(-dt*(d<CAM.cd?20:2.5)));
+  return[ct[0]-camF[0]*CAM.cd,ct[1]-camF[1]*CAM.cd,ct[2]-camF[2]*CAM.cd];
 }
 
 /* =====================================================================
@@ -1177,12 +1505,12 @@ function frame(now){
   // bank into turns while flying
   const yawV=(P.yaw-P.lastYaw)/Math.max(dt,1e-3);P.lastYaw=P.yaw;
   const strafe=(K.KeyD?1:0)-(K.KeyA?1:0)+TI.mx;
-  const tRoll=P.walk||paused?0:(clamp(-yawV*.05,-.32,.32)-strafe*.07)*clamp(speed/40,0,1);
+  const tRoll=P.walk||paused?0:(clamp(-yawV*.05,-.32,.32)-strafe*.07)*clamp(speed/40,0,1)*(CFG.view3?.4:1);
   P.roll=lerp(P.roll,tRoll,1-Math.exp(-dt*3.5));
   if(Math.abs(P.roll)>1e-4){const c=Math.cos(P.roll),s=Math.sin(P.roll);
     const r2=[camR[0]*c+camU[0]*s,camR[1]*c+camU[1]*s,camR[2]*c+camU[2]*s],u2=[camU[0]*c-camR[0]*s,camU[1]*c-camR[1]*s,camU[2]*c-camR[2]*s];camR=r2;camU=u2;}
   const bob=P.walk&&P.ground?Math.sin(P.bob)*.07:0;
-  const eye=[P.pos[0],P.pos[1]+bob,P.pos[2]];
+  const eye=CFG.view3?chaseCam(dt,speed):[P.pos[0],P.pos[1]+bob,P.pos[2]];
   U.uCam=eye;U.uVP=mmul(persp(fov,asp,.3,4200),viewM(eye,camF,camR,camU));
   const tY=Math.tan(fov/2),tX=tY*asp;
   // sun on screen (for god rays)
@@ -1191,6 +1519,7 @@ function frame(now){
     SUNV=sstep(0,.35,sz)*sstep(-.04,.06,e)*(1-sstep(1,1.5,Math.max(Math.abs(sx),Math.abs(sy))))*(1-NIGHT);}
 
   updateLife(dt,NIGHT,DAYF);
+  updateChar(dt,eye);
   AU.update(dt,speed,NIGHT,DAYF);
 
   // --- HUD ---
@@ -1239,6 +1568,8 @@ function render(eye,tX,tY,asp){
     gl.bindVertexArray(M.vao);gl.drawArraysInstanced(gl.TRIANGLES,0,M.count,Math.round(BIRDS.length*clamp(DAYF*1.3,0,1)));}
   {gl.uniform1f(N.u.uFlap,2);const M=MESH.whale;gl.bindBuffer(gl.ARRAY_BUFFER,M.ib);gl.bufferData(gl.ARRAY_BUFFER,WHBUF,gl.DYNAMIC_DRAW);
     gl.bindVertexArray(M.vao);gl.drawArraysInstanced(gl.TRIANGLES,0,M.count,WHALES.length);}
+  if(CHN){const S=PS.chr;use(S);gl.uniform3fv(S.u.uOrb,ORBU);gl.uniform3fv(S.u.uOrbC,ORBC);
+    gl.bindBuffer(gl.ARRAY_BUFFER,CHRG.vb);gl.bufferSubData(gl.ARRAY_BUFFER,0,CB,0,CHN*7);gl.bindVertexArray(CHRG.vao);gl.drawArrays(gl.TRIANGLES,0,CHN);}
   const SE=PS.sea;use(SE);gl.uniform2f(SE.u.uOff,Math.round(eye[0]/SEASTEP)*SEASTEP,Math.round(eye[2]/SEASTEP)*SEASTEP);gl.uniform1f(SE.u.uSea,SEA);
   gl.bindVertexArray(SEAVAO);gl.drawElements(gl.TRIANGLES,SEAIDX,gl.UNSIGNED_SHORT,0);
   // transparent
