@@ -106,7 +106,7 @@ kbd{font-family:inherit;border:1px solid #fff5;border-radius:4px;padding:1px 5px
   <p>An endless archipelago adrift above a sea of clouds. Gather the wandering wisps,
   wake the old shrines, and send lanterns up to where the sky whales sing.</p>
   <div class="go">Begin drifting</div>
-  <div class="k">mouse — look &nbsp;·&nbsp; WASD — move &nbsp;·&nbsp; Space / C — rise / sink &nbsp;·&nbsp; Shift — boost<br>
+  <div class="k">mouse — look &nbsp;·&nbsp; WASD — move &nbsp;·&nbsp; Space / C — rise / sink &nbsp;·&nbsp; Shift — boost (hold it while still to power up)<br>
   E — release a lantern &nbsp;·&nbsp; G — walk / glide &nbsp;·&nbsp; V — change view &nbsp;·&nbsp; T — hurry time &nbsp;·&nbsp; headphones recommended</div>
 </div>
 <div id="pause" class="hide">
@@ -316,13 +316,13 @@ void main(){
 // ---- the wanderer: CPU-posed body + support orbs (world-space, rebuilt every frame) ----
 const VS_CHR=`layout(location=0) in vec3 aP;layout(location=1) in vec4 aC;out vec3 vW;out vec3 vC;out float vE;
 void main(){vW=aP;vC=aC.rgb;vE=aC.a;gl_Position=uVP*vec4(aP,1.);}`;
-const FS_CHR=`uniform vec3 uOrb[6];uniform vec3 uOrbC;in vec3 vW;in vec3 vC;in float vE;out vec4 o;
+const FS_CHR=`uniform vec3 uOrb[4];uniform vec3 uOrbC;in vec3 vW;in vec3 vC;in float vE;out vec4 o;
 void main(){
   vec3 n=normalize(cross(dFdx(vW),dFdy(vW)));
   vec3 v=normalize(vW-uCam);
   vec3 c=light(vC,n);
   // the orbs light whatever they hold
-  for(int i=0;i<6;i++){vec3 L=uOrb[i]-vW;float d2=dot(L,L);c+=vC*uOrbC*(max(dot(n,L*inversesqrt(d2)),0.)*.8+.2)/(1.+d2*9.);}
+  for(int i=0;i<4;i++){vec3 L=uOrb[i]-vW;float d2=dot(L,L);c+=vC*uOrbC*(max(dot(n,L*inversesqrt(d2)),0.)*.8+.2)/(1.+d2*9.);}
   // soft rim so the silhouette reads against sky and cloud
   float fr=pow(1.-abs(dot(n,v)),3.);
   c+=vC*(uAmbS*1.4+uGlow*.25)*fr*.9;
@@ -414,7 +414,7 @@ void main(){vec2 px=uDir/vec2(textureSize(uT,0));
   c+=(texture(uT,vUV+px*1.385).rgb+texture(uT,vUV-px*1.385).rgb)*.316;
   c+=(texture(uT,vUV+px*3.231).rgb+texture(uT,vUV-px*3.231).rgb)*.07;
   o=vec4(c,1.);}`;
-const FS_CMP=`uniform sampler2D uS,uB;uniform vec2 uSun;uniform float uSunVis,uCloud,uExp,uAsp;uniform vec3 uCloudC;
+const FS_CMP=`uniform sampler2D uS,uB;uniform vec2 uSun;uniform float uSunVis,uCloud,uExp,uAsp,uSpd;uniform vec3 uCloudC;
 in vec2 vUV;out vec4 o;
 vec3 aces(vec3 x){return clamp(x*(2.51*x+.03)/(x*(2.43*x+.59)+.14),0.,1.);}
 void main(){
@@ -426,6 +426,10 @@ void main(){
     for(int i=0;i<40;i++){vec2 dd=(p-uSun)*vec2(uAsp,1.);float m=exp(-dot(dd,dd)*5.);g+=texture(uB,p).rgb*w*m;w*=.955;p+=dl;}
     c+=g*uSunVis*.045;
   }
+  // anime speed lines: thin radial streaks that flicker at the edges of the screen
+  if(uSpd>.01){vec2 q2=(vUV-.5)*vec2(uAsp,1.);float r=length(q2),a=atan(q2.y,q2.x)*95.;
+    float ln=h12(vec2(floor(a),floor(uTime*12.)))*.97,ed=abs(fract(a)-.5)*2.;
+    c+=vec3(.85,.95,1.)*smoothstep(.9,1.,ln)*smoothstep(.3,.8,r)*(1.-ed)*uSpd*.32;}
   c=mix(c,uCloudC,uCloud);
   c=aces(c*uExp);
   c=pow(c,vec3(1./2.2));
@@ -572,7 +576,7 @@ const CHR=(()=>{const R=rngOf(9001),C=CHC,mk=f=>{const g=GB();f(g);return new Fl
   shin:mk(g=>{prism(g,7,.057,.07,-.26,0,C.pant);prism(g,7,.068,.074,-.43,-.22,C.boot);}),
   foot:mk(g=>{cbox(g,-.058,.058,-.085,0,-.17,.06,C.boot);}),
 };})();
-const ORBN=6;
+const ORBN=4;
 // orb: icosahedron subdivided once (80 faces) so it reads as a ball, not a gem
 const ORBMESH=(()=>{const o=[];const mid=(a,b)=>norm([(a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2]);
   for(const f of IF){const a=IV[f[0]],b=IV[f[1]],c=IV[f[2]],ab=mid(a,b),bc=mid(b,c),ca=mid(c,a);
@@ -813,8 +817,18 @@ const AU={c:null,muted:false,ci:0,next:0,
     const nb=this.nb=c.createBuffer(1,c.sampleRate*4,c.sampleRate);const d=nb.getChannelData(0);let b=0;
     for(let i=0;i<d.length;i++){const w=Math.random()*2-1;b=(b+.02*w)/1.02;d[i]=w*.35+b*3.2;}
     const ns=c.createBufferSource();ns.buffer=nb;ns.loop=true;
-    this.wf=c.createBiquadFilter();this.wf.type='bandpass';this.wf.frequency.value=420;this.wf.Q.value=.7;
+    // rushing air: a soft lowpassed rush that opens up with speed (no whistle)
+    this.wf=c.createBiquadFilter();this.wf.type='lowpass';this.wf.frequency.value=300;this.wf.Q.value=.4;
     this.wg=c.createGain();this.wg.gain.value=0;ns.connect(this.wf);this.wf.connect(this.wg);this.wg.connect(m);
+    // aura: a low, warm energy drone with a slow tremolo and a faint crackle on top
+    this.au=c.createGain();this.au.gain.value=0;this.au.connect(m);const aus=c.createGain();aus.gain.value=.35;this.au.connect(aus);aus.connect(rv);
+    this.af=c.createBiquadFilter();this.af.type='lowpass';this.af.frequency.value=300;this.af.Q.value=3;
+    const trem=c.createGain();trem.gain.value=.8;const tlo=c.createOscillator();tlo.frequency.value=6.5;const tlg=c.createGain();tlg.gain.value=.2;
+    tlo.connect(tlg);tlg.connect(trem.gain);tlo.start();this.af.connect(trem);trem.connect(this.au);
+    this.ao=[];for(const [f,ty,g] of [[55,'sawtooth',.4],[55.7,'sawtooth',.4],[110.4,'triangle',.25],[164.8,'sine',.12]]){
+      const o=c.createOscillator();o.type=ty;o.frequency.value=f;const og=c.createGain();og.gain.value=g;o.connect(og);og.connect(this.af);o.start();this.ao.push([o,f]);}
+    const ks=c.createBufferSource();ks.buffer=nb;ks.loop=true;const kf=c.createBiquadFilter();kf.type='bandpass';kf.frequency.value=3200;kf.Q.value=.9;
+    this.ak=c.createGain();this.ak.gain.value=0;ks.connect(kf);kf.connect(this.ak);this.ak.connect(this.au);ks.start(0,1.3);
     const lp=c.createBiquadFilter();lp.type='lowpass';lp.frequency.value=170;const lg=c.createGain();lg.gain.value=.22;ns.connect(lp);lp.connect(lg);lg.connect(m);
     ns.start();
     // pad bus
@@ -854,6 +868,15 @@ const AU={c:null,muted:false,ci:0,next:0,
     const g=c.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.25,t+.25);g.gain.exponentialRampToValueAtTime(.001,t+1.4);
     s.connect(f);f.connect(g);g.connect(this.fx);s.start(t,Math.random()*2);s.stop(t+1.5);
     this.bell(220,.06,t+.15);this.bell(330,.04,t+.35);},
+  // the aura igniting: a deep soft thump under an upward rush of air
+  boom(){if(!this.c)return;const c=this.c,t=c.currentTime;
+    const o=c.createOscillator();o.type='sine';o.frequency.setValueAtTime(110,t);o.frequency.exponentialRampToValueAtTime(36,t+.55);
+    const og=c.createGain();og.gain.setValueAtTime(0,t);og.gain.linearRampToValueAtTime(.2,t+.02);og.gain.exponentialRampToValueAtTime(.001,t+.75);
+    o.connect(og);og.connect(this.m);o.start(t);o.stop(t+.8);
+    const s=c.createBufferSource();s.buffer=this.nb;const f=c.createBiquadFilter();f.type='bandpass';f.Q.value=1.4;
+    f.frequency.setValueAtTime(260,t);f.frequency.exponentialRampToValueAtTime(2200,t+.4);
+    const g=c.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.13,t+.08);g.gain.exponentialRampToValueAtTime(.001,t+.95);
+    s.connect(f);f.connect(g);g.connect(this.fx);s.start(t,Math.random()*2);s.stop(t+1);},
   // the soft thump of the orbs pushing off the ground
   puff(){if(!this.c)return;const c=this.c,t=c.currentTime;const s=c.createBufferSource();s.buffer=this.nb;
     const f=c.createBiquadFilter();f.type='lowpass';f.frequency.setValueAtTime(1500,t);f.frequency.exponentialRampToValueAtTime(200,t+.55);
@@ -870,9 +893,12 @@ const AU={c:null,muted:false,ci:0,next:0,
     for(let i=0;i<n;i++){const t=t0+i*(.09+Math.random()*.07);const o=c.createOscillator();o.frequency.setValueAtTime(base*(1+Math.random()*.1),t);
       o.frequency.exponentialRampToValueAtTime(base*1.55,t+.06);const e=c.createGain();e.gain.setValueAtTime(0,t);e.gain.linearRampToValueAtTime(.016,t+.01);
       e.gain.exponentialRampToValueAtTime(.0001,t+.085);o.connect(e);e.connect(this.fx);o.start(t);o.stop(t+.1);}},
-  update(dt,speed,night,day){
-    const c=this.c;if(!c)return;const t=c.currentTime;const s=clamp(speed/90,0,1);
-    this.wg.gain.setTargetAtTime(.05+s*s*.5,t,.25);this.wf.frequency.setTargetAtTime(320+s*1500,t,.25);
+  update(dt,speed,night,day,aura){
+    const c=this.c;if(!c)return;const t=c.currentTime;const s=clamp(speed/90,0,1),a=aura||0;
+    this.wg.gain.setTargetAtTime(.035+s*s*.17,t,.3);this.wf.frequency.setTargetAtTime(260+s*1900,t,.3);
+    this.au.gain.setTargetAtTime(a*.085,t,.35);this.af.frequency.setTargetAtTime(240+a*380+s*480,t,.3);
+    for(const [o,f] of this.ao)o.frequency.setTargetAtTime(f*(1+s*.22),t,.4);
+    this.ak.gain.setTargetAtTime(a*(.15+Math.random()*.5)*.35,t,.03);
     this.cg.gain.setTargetAtTime(night*.011,t,1.5);this.pf.frequency.setTargetAtTime(420+day*1000,t,2);
     if(t>this.next)this.chord();
     if(day>.5&&Math.random()<dt*.12)this.chirp();
@@ -884,7 +910,7 @@ const AU={c:null,muted:false,ci:0,next:0,
    6. PLAYER + INPUT
    ===================================================================== */
 const P={pos:[0,0,0],vel:[0,0,0],yaw:0,pitch:-.08,walk:false,ground:false,wasGround:false,air:0,jumpHeld:false,bob:0,fov:70,roll:0,lastYaw:0,inWind:0,
-  gliding:false,launch:0,launched:false,upPrev:false,landV:0,inPlanar:false,inVert:false};
+  gliding:false,boostHeld:false,launch:0,launched:false,upPrev:false,landV:0,inPlanar:false,inVert:false};
 // settings (persisted)
 const CFG={sens:1,vol:.85,inv:false,q:1,view3:true};
 try{Object.assign(CFG,JSON.parse(localStorage.getItem('driftlands:cfg'))||{});}catch(e){}
@@ -960,7 +986,7 @@ function updatePlayer(dt){
   const ms=(K.KeyD||K.ArrowRight?1:0)-(K.KeyA||K.ArrowLeft?1:0)+TI.mx;
   const upk=K.Space||TI.up;const mu=(upk?1:0)-(K.KeyC||K.ControlLeft||TI.down?1:0);
   const boost=K.ShiftLeft||K.ShiftRight||TI.boost;
-  P.inPlanar=Math.abs(mf)+Math.abs(ms)>.05;P.inVert=mu!==0;
+  P.inPlanar=Math.abs(mf)+Math.abs(ms)>.05;P.inVert=mu!==0;P.boostHeld=boost&&!P.walk;
   if(!P.walk){
     const sp=boost?90:28;P.gliding=false;
     let d=[camF[0]*mf+rt[0]*ms,camF[1]*mf+mu,camF[2]*mf+rt[2]*ms];const l=Math.hypot(d[0],d[1],d[2]);if(l>1)d=mul3(d,1/l);
@@ -1202,6 +1228,8 @@ const PO={
   jump:  sym({Sz:.55,El:.6},{rSx:.9,lSx:-.5,rHx:.95,rKn:-1.35,rAn:-.3,lHx:-.25,lKn:-.45,lAn:-.5}),
   fall:  sym({nk:.2,Sx:.4,Sz:1.55,El:.35,Hx:.25,Hz:.12,Kn:-.5,An:.1},{rHx:.45,rKn:-.75}),
   glide: sym({nk:-.6,Sx:.08,Sz:1.42,El:.08,Hx:-.1,Kn:-.2,An:-.9}),
+  // powering up: fists clenched low at the sides, legs braced apart, chin down
+  power: sym({sp:.16,nk:.18,Sx:-.22,Sz:.42,El:1.35,Hz:.2,Kn:-.32,An:-.25},{rHx:.08,lHx:-.04}),
   crouch:sym({sp:.45,nk:-.25,Sx:-.75,Sz:.25,El:.4,Hx:1.05,Hz:.06,Kn:-1.75,An:.7,dy:-.33}),
 };
 function addP(o,p,w){if(w<1e-4)return;for(const k of PK){const v=p[k];if(v)o[k]+=v*w;}}
@@ -1212,7 +1240,10 @@ function walkPose(ph,a,run){const s=Math.sin(ph),c=Math.cos(ph),kb=.06+run*.25*a
     rSx:-s*.55*a,lSx:s*.55*a,rSz:.1+run*.1,lSz:.1+run*.1,rEl:.25+a*(.25+run*.95),lEl:.25+a*(.25+run*.95),
     rHz:.04,lHz:.04,sp:.04+run*.16,sy:s*.13*a,nk:-.04-run*.1,dy:-.07*a*s*s-.02*a-run*.05};}
 
-const AN={init:false,yaw:0,lean:0,leanV:0,roll:0,rollV:0,turn:0,travel:0,pv:[0,0,0],acc:[0,0,0],G:0,WA:0,FA:1,gl:0,ph:0,landT:9,landK:0};
+const AN={init:false,yaw:0,lean:0,leanV:0,roll:0,rollV:0,turn:0,travel:0,pv:[0,0,0],acc:[0,0,0],G:0,WA:0,FA:1,gl:0,ph:0,landT:9,landK:0,
+  aura:0,auraOn:false,boomCd:0,wave:null,trail:[]};
+const AURAN=170,AURAH=[];for(let i=0;i<AURAN;i++)AURAH.push([Math.random(),Math.random(),Math.random()]);
+let SPDFX=0;
 const PQ={};
 const ORBS=[];for(let i=0;i<ORBN;i++)ORBS.push({o:[0,-.6,0],v:[0,0,0],p:[0,0,0]});
 const ORBU=new Float32Array(ORBN*3),ORBC=new Float32Array(3);
@@ -1283,20 +1314,24 @@ function updateChar(dt,eye){
   if(WA>1e-3){const up=clamp(v[1]/7+.5,0,1);addP(PQ,PO.glide,WA*AN.gl);addP(PQ,PO.jump,WA*(1-AN.gl)*up);addP(PQ,PO.fall,WA*(1-AN.gl)*(1-up));}
   // flight: hover, travel (fly / boost), brake, rise, sink
   const sN=clamp(s/28,0,1);let wT=0,wB=0,wU=0,wD=0,wH=0,fLean=0;
+  // energy aura: flying fast, or holding boost while still to power up
+  const auraT=P.walk?0:Math.max(clamp((s-34)/30,0,1),P.boostHeld&&!paused?1:0);
+  AN.aura=lerp(AN.aura,auraT,1-Math.exp(-dt*(auraT>AN.aura?5:2)));
+  const pw=AN.aura*(1-sN);      // powering up in place
   if(FA>1e-3){
     wB=clamp(-aT/22,0,1)*clamp(s/5,0,1)*AN.travel;
     wT=AN.travel*sN*(1-wB);
     const rem=Math.max(0,1-wT-wB);
     wU=rem*clamp(v[1]/14,0,1);wD=rem*clamp(-v[1]/14,0,1);wH=Math.max(0,rem-wU-wD);
     const bo=clamp((s-32)/40,0,1);
-    addP(PQ,PO.hover,FA*wH);addP(PQ,PO.rise,FA*wU);addP(PQ,PO.sink,FA*wD);addP(PQ,PO.brake,FA*wB);
+    addP(PQ,PO.hover,FA*wH*(1-pw));addP(PQ,PO.power,FA*wH*pw);addP(PQ,PO.rise,FA*wU);addP(PQ,PO.sink,FA*wD);addP(PQ,PO.brake,FA*wB);
     addP(PQ,PO.fly,FA*wT*(1-bo));addP(PQ,PO.boost,FA*wT*bo);
     const ang=Math.atan2(hs,v[1]);          // 0 straight up · π/2 level · π straight down: the body lines up with its path
     fLean=wT*ang*.9+wB*(ang*.25-.32)+wH*.04+wD*.1-wU*.03+clamp(aT/50,-.3,.45)*.55*AN.travel;
   }
   // breathing, the hover's gentle bob (arms press down on the orbs), leg flutter
-  const br=Math.sin(t*1.9),hb=FA*wH;
-  PQ.dy+=hb*br*.07;PQ.rSz+=hb*Math.sin(t*1.9+.7)*.05;PQ.lSz+=hb*Math.sin(t*1.9+.7)*.05;
+  const br=Math.sin(t*1.9),hb=FA*wH*(1-pw);
+  PQ.dy+=hb*br*.07+FA*wH*pw*.12;PQ.sp+=FA*wH*pw*Math.sin(t*43)*.012;PQ.rSx+=FA*wH*pw*Math.sin(t*37)*.03;PQ.lSx+=FA*wH*pw*Math.sin(t*41)*.03;PQ.rSz+=hb*Math.sin(t*1.9+.7)*.05;PQ.lSz+=hb*Math.sin(t*1.9+.7)*.05;
   const flt=Math.sin(t*7)*.07*FA*wT;PQ.rHx+=flt;PQ.lHx-=flt;
   // crouch overlay: winding up a take-off, or soaking up a landing
   let cw=0;if(P.launch>0)cw=sstep(0,.09,P.launch)*(1-sstep(.2,.34,P.launch));
@@ -1331,32 +1366,35 @@ function updateChar(dt,eye){
   const cols=[[wpt(chest,[0,.2,0]),.25],[rootP,.24],[wpt(head,[0,.16,0]),.17]];
   for(const sc of SCARF)simScarf(sc,wpt(chest,sc.off),dt,cols);
 
-  // ---- orbs: each one is pulled toward a blend of where every motion wants it, in body-relative space ----
-  const supW=FA*(wH+wB)+WA*AN.gl,trW=FA*wT,upW=FA*wU,dnW=FA*wD,haW=G+WA*(1-AN.gl);
-  const al=Math.hypot(AN.acc[0],AN.acc[1],AN.acc[2]),ac=al>40?mul3(AN.acc,40/al):AN.acc;
-  for(let i=0;i<ORBN;i++){const ob=ORBS[i],ph=i/ORBN*TAU,T=[0,0,0];
+  // ---- orbs: four. Floating, one rests at each hand and each foot; flying, they orbit you inside the aura. ----
+  // Targets live in the body's own frame and are eased there, so the orbs turn and lean with you instead of lagging and wobbling.
+  const limbW=FA*(wH*(1-pw)+wB+wU+wD)+WA*AN.gl,orbW=FA*(wT+wH*pw),haW=G+WA*(1-AN.gl);
+  const toL=p=>{const d=[p[0]-rootP[0],p[1]-rootP[1],p[2]-rootP[2]];return[Rr[0]*d[0]+Rr[3]*d[1]+Rr[6]*d[2],Rr[1]*d[0]+Rr[4]*d[1]+Rr[7]*d[2],Rr[2]*d[0]+Rr[5]*d[1]+Rr[8]*d[2]];};
+  const limbs=[[hR[0],hR[1]-.12,hR[2]],[hL[0],hL[1]-.12,hL[2]],[fR[0],fR[1]-.13,fR[2]],[fL[0],fL[1]-.13,fL[2]]].map(toL);
+  const fmL=toL(fm),ospd=4+s*.05+pw*6,ke=1-Math.exp(-dt*16);
+  for(let i=0;i<ORBN;i++){const ob=ORBS[i],ph=i*Math.PI/2,T=[0,0,0];
     const add=(p,w)=>{if(w>1e-4){T[0]+=p[0]*w;T[1]+=p[1]*w;T[2]+=p[2]*w;}};
-    // hover: one under each palm and each sole; two more circle the waist
-    if(supW>1e-4){let p;if(i<4){const b=[hR,hL,fR,fL][i];p=[b[0],b[1]-(i<2?.13:.15),b[2]];}
-      else{const a=t*1.3+ph;p=[rootP[0]+Math.cos(a)*.78,rootP[1]+.12+Math.sin(t*2.1+i)*.1,rootP[2]+Math.sin(a)*.78];}add(p,supW);}
-    // travel: a helix winding along the body from crown to toes
-    if(trW>1e-4){const a=t*(3.4+s*.05)+i*2.4,al2=1.05-i*.42,rr=.5+.08*Math.sin(t*3+i),c=Math.cos(a)*rr,sn=Math.sin(a)*rr;
-      add([rootP[0]+ax[0]*al2+e1[0]*c+e2[0]*sn,rootP[1]+ax[1]*al2+e1[1]*c+e2[1]*sn,rootP[2]+ax[2]*al2+e1[2]*c+e2[2]*sn],trW);}
-    // rising: a spinning ring of thrusters under the feet
-    if(upW>1e-4){const a=t*6.5+ph;add([fm[0]+Math.cos(a)*.3,fm[1]-.28-(i%2)*.14,fm[2]+Math.sin(a)*.3],upW);}
-    // sinking: held overhead, a slow parachute
-    if(dnW>1e-4){let p;if(i<2){const b=i?hL:hR;p=[b[0],b[1]+.16,b[2]];}
-      else{const a=t*1.6+ph;p=[hd[0]+Math.cos(a)*.55,hd[1]+.3+Math.sin(t*2+i)*.06,hd[2]+Math.sin(a)*.55];}add(p,dnW);}
+    add(limbs[i],limbW);
+    // orbit: four tilted rings around the body's long axis, like electrons around the chest
+    if(orbW>1e-4){const a=t*ospd+ph,tl=[.5,-.5,1.05,-1.05][i],rr=.82+.08*Math.sin(t*2.3+i),cx=Math.cos(a)*rr;
+      add([cx*Math.cos(tl),.42+cx*Math.sin(tl),Math.sin(a)*rr],orbW);}
     // on the ground: a lazy halo
-    if(haW>1e-4){const a=t*.85+ph;add([rootP[0]+Math.cos(a)*.85,rootP[1]+.5+Math.sin(t*1.7+i*1.3)*.13,rootP[2]+Math.sin(a)*.85],haW);}
-    const tw=supW+trW+upW+dnW+haW||1;T[0]/=tw;T[1]/=tw;T[2]/=tw;
-    if(cw>0){const a=t*3+ph,c=[fm[0]+Math.cos(a)*.32,fm[1]-.02,fm[2]+Math.sin(a)*.32];for(let j=0;j<3;j++)T[j]=lerp(T[j],c[j],cw);}
-    // springs with inertia: they lag when you speed up and swing ahead when you brake
-    for(let j=0;j<3;j++){const to=T[j]-rootP[j];ob.v[j]+=((to-ob.o[j])*70-ob.v[j]*12-ac[j]*.7)*dt;ob.o[j]+=ob.v[j]*dt;
-      if(!isFinite(ob.o[j])){ob.o[j]=to;ob.v[j]=0;}ob.p[j]=rootP[j]+ob.o[j];}
+    if(haW>1e-4){const a=t*.9+ph;add([Math.cos(a)*.8,.55+Math.sin(t*1.7+i*1.3)*.1,Math.sin(a)*.8],haW);}
+    const tw=limbW+orbW+haW||1;T[0]/=tw;T[1]/=tw;T[2]/=tw;
+    if(cw>0){const a=t*3+ph,c=[fmL[0]+Math.cos(a)*.3,fmL[1]-.05,fmL[2]+Math.sin(a)*.3];for(let j=0;j<3;j++)T[j]=lerp(T[j],c[j],cw);}
+    for(let j=0;j<3;j++){ob.o[j]=lerp(ob.o[j],T[j],ke);if(!isFinite(ob.o[j]))ob.o[j]=T[j];}
+    const w=m3v(Rr,ob.o);ob.p=[rootP[0]+w[0],rootP[1]+w[1],rootP[2]+w[2]];
     ORBU[i*3]=ob.p[0];ORBU[i*3+1]=ob.p[1];ORBU[i*3+2]=ob.p[2];
   }
-  const ol=.55+NIGHT*1.3;ORBC[0]=.32*ol;ORBC[1]=.62*ol;ORBC[2]=.9*ol;
+  const ol=(.55+NIGHT*1.3)*(1+AN.aura*1.3);ORBC[0]=.32*ol;ORBC[1]=.62*ol;ORBC[2]=.9*ol;
+
+  // ---- the aura ignites: shockwave ring, a thump, a camera kick ----
+  AN.boomCd-=dt;
+  if(auraT>.6&&!AN.auraOn&&AN.boomCd<=0&&started){AN.auraOn=true;AN.boomCd=1.5;
+    AN.wave={p:rootP.slice(),d:s>8?vd.slice():[0,1,0],t:0};AU.boom();P.fov+=7;CAM.shake=.2;
+    for(let i=0;i<40;i++){const a=Math.random()*TAU,b=Math.acos(Math.random()*2-1),sp=5+Math.random()*9;
+      BURST.push({p:rootP.slice(),v:[Math.sin(b)*Math.cos(a)*sp,Math.cos(b)*sp,Math.sin(b)*Math.sin(a)*sp],t:0,m:.4+Math.random()*.5});}}
+  if(auraT<.25)AN.auraOn=false;
 
   // ---- build this frame's mesh + glows ----
   CHN=0;
@@ -1367,16 +1405,43 @@ function updateChar(dt,eye){
   for(let i=0;i<ORBN;i++){const p=ORBS[i].p;
     if(!tp&&(p[0]-eye[0])**2+(p[1]-eye[1])**2+(p[2]-eye[2])**2<.9)continue;
     emitOrb(p,.075,CHC.orb);
-    const k=(1-hb*.35*br)*(1+.3*sN)*(1+NIGHT*.6);
+    const k=(1-hb*.35*br)*(1+.3*sN)*(1+NIGHT*.6)*(1+AN.aura*.8);
     gp(p[0],p[1],p[2],.2,.95*k,1.45*k,1.9*k,0);gp(p[0],p[1],p[2],.95,.06*k,.11*k,.16*k,0);
-    // lift: light drips from the orbs that hold you up, and pours from them when rising
-    const st=FA*(wH*(i<4?1:.3)+wU*1.6)+WA*AN.gl*(i<2?1:0)+cw*.8;
+    // lift: light drips from the orbs that hold you up
+    const st=FA*(wH*(1-pw)+wU*1.4+wD*.6)+WA*AN.gl+cw*.8;
     if(st>.02)for(let j=0;j<3;j++){const f=(t*1.3+j/3+i*.29)%1,a=(1-f)*st;
-      gp(p[0]+Math.sin(f*7+i)*.04,p[1]-.06-f*(.6+upW*.8),p[2]+Math.cos(f*6+i)*.04,.06+.06*(1-f),.4*a,.8*a,1.1*a,0);}
-    // speed streaks behind each orb
-    const sl=trW*sN;
-    if(sl>.02)for(let j=1;j<=4;j++){const a=sl*(1-j/5)*.6;gp(p[0]-vd[0]*j*.22,p[1]-vd[1]*j*.22,p[2]-vd[2]*j*.22,.1,.35*a,.7*a,a,0);}
+      gp(p[0]+Math.sin(f*7+i)*.04,p[1]-.06-f*(.6+FA*wU*.8),p[2]+Math.cos(f*6+i)*.04,.06+.06*(1-f),.4*a,.8*a,1.1*a,0);}
+    // streaks behind each orbiting orb
+    const sl=orbW*Math.max(sN,pw);
+    if(sl>.02){const q=ORBS[i].q||(ORBS[i].q=p.slice());for(let j=1;j<=4;j++){const f=j/5,a=sl*(1-f)*.55;
+      gp(lerp(p[0],q[0],f)-vd[0]*j*.18*sN,lerp(p[1],q[1],f)-vd[1]*j*.18*sN,lerp(p[2],q[2],f)-vd[2]*j*.18*sN,.1,.35*a,.7*a,a,0);}
+      ORBS[i].q=mix3(q,p,1-Math.exp(-dt*9));}
   }
+
+  // ---- energy aura: white-hot at the body, cyan at the tips. It licks upward while powering up and streams back at speed. ----
+  const au=AN.aura,day=2.6-NIGHT*1.7;   // daylight needs more punch for additive light to read
+  SPDFX=au*(.45+.55*clamp(s/70,0,1));
+  if(au>.01){const sF=clamp(s/30,0,1),F=norm([-vd[0]*sF,1-sF-vd[1]*sF,-vd[2]*sF]);
+    for(let k=0;k<AURAN;k++){const h=AURAH[k],ph=(t*(1.5+h[0]*1.5)+h[1])%1,u=h[2],a=h[0]*TAU+h[1]*9+t*.7;
+      const ca=Math.cos(a),sa=Math.sin(a),rr=.19+.14*Math.sin(u*Math.PI)+ph*.12,al=-.95+u*2,len=(.45+.9*sF+h[1]*.45)*ph;
+      const ox=e1[0]*ca+e2[0]*sa,oy=e1[1]*ca+e2[1]*sa,oz=e1[2]*ca+e2[2]*sa;
+      const fade=Math.pow(1-ph,1.4)*(.65+.35*Math.sin(t*23+k*1.7))*au*day,wc=1-ph;
+      gp(rootP[0]+ax[0]*al+ox*rr+F[0]*len,rootP[1]+ax[1]*al+oy*rr+F[1]*len,rootP[2]+ax[2]*al+oz*rr+F[2]*len,
+        (.32*(1-ph)+.08)*(.8+h[2]*.4),(.12+.45*wc)*fade,(.4+.42*wc)*fade,(1.15+.2*wc)*fade,0);}
+    // the haze that wraps it all
+    for(let k=0;k<5;k++){const al=-.8+k*.42,fl=au*day*(.8+.2*Math.sin(t*17+k*2));gp(rootP[0]+ax[0]*al,rootP[1]+ax[1]*al,rootP[2]+ax[2]*al,1.7,.04*fl,.13*fl,.28*fl,0);}
+  }
+  // light trail left in the air behind you
+  if(au>.05&&s>12){AN.trail.unshift(rootP.slice());if(AN.trail.length>22)AN.trail.pop();}else if(AN.trail.length)AN.trail.pop();
+  const tk=au*clamp((s-12)/30,0,1)*day;
+  for(let k=1;k<AN.trail.length-1;k++){const a=AN.trail[k],b=AN.trail[k+1];
+    for(let m=0;m<3;m++){const f=m/3,w=1-(k+f)/22,q=tk*w*w*.45;gp(lerp(a[0],b[0],f),lerp(a[1],b[1],f),lerp(a[2],b[2],f),.18+.45*w,.4*q,.75*q,1.1*q,0);}}
+  // shockwave ring
+  if(AN.wave){const wv=AN.wave;wv.t+=dt;
+    if(wv.t>.8)AN.wave=null;
+    else{const d=wv.d,u1=norm(cross3(d,Math.abs(d[1])>.9?[1,0,0]:[0,1,0])),u2=cross3(d,u1),x=wv.t/.8,rad=.6+15*(1-(1-x)*(1-x)),a=Math.pow(1-x,1.6)*day;
+      for(let k=0;k<72;k++){const an=k/72*TAU,c=Math.cos(an)*rad,sn=Math.sin(an)*rad;
+        gp(wv.p[0]+u1[0]*c+u2[0]*sn,wv.p[1]+u1[1]*c+u2[1]*sn,wv.p[2]+u1[2]*c+u2[2]*sn,.35+x*.9,.45*a,.75*a,1.05*a,0);}}}
 }
 
 // is a point inside island rock? (keeps the chase camera out of cliffs and hillsides)
@@ -1388,7 +1453,7 @@ function solidAt(x,y,z){
     const bot=lerp(top-1.2,I.y-I.depth,Math.pow(Math.max(0,1-Math.pow(rf,1/1.25)),.8))-1.6;if(y>bot)return true;}
   return false;}
 // chase camera: lags a little behind (so speeding up and slowing down read), pulls back with speed, never enters rock
-const CAM={t:null,d:5,cd:5};
+const CAM={t:null,d:5,cd:5,shake:0};
 function chaseCam(dt,speed){
   const tg=[P.pos[0],P.pos[1]-EYE+1.75,P.pos[2]];
   if(!CAM.t||Math.hypot(CAM.t[0]-tg[0],CAM.t[1]-tg[1],CAM.t[2]-tg[2])>40){CAM.t=tg.slice();CAM.cd=CAM.d;}
@@ -1401,7 +1466,10 @@ function chaseCam(dt,speed){
   const ct=CAM.t;let d=CAM.d;
   for(let i=1;i<=12;i++){const q=i/12*CAM.d;if(solidAt(ct[0]-camF[0]*q,ct[1]-camF[1]*q,ct[2]-camF[2]*q)){d=Math.max(.55,q-CAM.d/12-.25);break;}}
   CAM.cd=lerp(CAM.cd,d,1-Math.exp(-dt*(d<CAM.cd?20:2.5)));
-  return[ct[0]-camF[0]*CAM.cd,ct[1]-camF[1]*CAM.cd,ct[2]-camF[2]*CAM.cd];
+  // a faint tremor while the aura burns, a kick when it ignites
+  const sh=CAM.shake+AN.aura*.018;CAM.shake*=Math.exp(-dt*5);
+  const jx=(Math.sin(time*41)+Math.sin(time*67))*sh*.5,jy=(Math.sin(time*53+1)+Math.sin(time*31))*sh*.5;
+  return[ct[0]-camF[0]*CAM.cd+camR[0]*jx+camU[0]*jy,ct[1]-camF[1]*CAM.cd+camR[1]*jx+camU[1]*jy,ct[2]-camF[2]*CAM.cd+camR[2]*jx+camU[2]*jy];
 }
 
 /* =====================================================================
@@ -1520,7 +1588,7 @@ function frame(now){
 
   updateLife(dt,NIGHT,DAYF);
   updateChar(dt,eye);
-  AU.update(dt,speed,NIGHT,DAYF);
+  AU.update(dt,speed,NIGHT,DAYF,AN.aura);
 
   // --- HUD ---
   if(hudDirty){wcEl.textContent=SAVE.w;lcEl.textContent=SAVE.l;$('sc').textContent=SHR.size;hudDirty=false;}
@@ -1594,7 +1662,7 @@ function render(eye,tX,tY,asp){
   gl.uniform2f(C.u.uSun,SUNUV[0],SUNUV[1]);gl.uniform1f(C.u.uSunVis,SUNV);gl.uniform1f(C.u.uAsp,asp);
   gl.uniform1f(C.u.uCloud,sstep(SEA+22,SEA-14,eye[1])*.92);
   gl.uniform3fv(C.u.uCloudC,[U.uHor[0]*.6+U.uAmbS[0]*.9,U.uHor[1]*.6+U.uAmbS[1]*.9,U.uHor[2]*.6+U.uAmbS[2]*.9]);
-  gl.uniform1f(C.u.uExp,lerp(.92,1.45,NIGHT));
+  gl.uniform1f(C.u.uExp,lerp(.92,1.45,NIGHT));gl.uniform1f(C.u.uSpd,SPDFX);
   gl.drawArrays(gl.TRIANGLES,0,3);
 }
 
